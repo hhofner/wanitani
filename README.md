@@ -2,6 +2,8 @@
 
 A terminal-based WaniKani client. Learn kanji, radicals, and vocabulary right from your terminal.
 
+![demo](demo.gif)
+
 ## Install
 
 ```

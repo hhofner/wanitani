@@ -471,6 +471,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = fmt.Sprintf("Lesson complete! Started %d items on WaniKani.", msg.count)
 		}
+		return m, fetchSummaryCmd(m.token)
 
 	case lessonsFetchedMsg:
 		m.loadingLessons = false
@@ -678,10 +679,7 @@ func (m model) updateQuiz(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					subjectIDs = append(subjectIDs, id)
 				}
 
-				return m, tea.Batch(
-					startAssignmentsCmd(m.token, subjectIDs),
-					fetchSummaryCmd(m.token),
-				)
+				return m, startAssignmentsCmd(m.token, subjectIDs)
 			}
 			return m, nil
 		}
