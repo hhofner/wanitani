@@ -10,37 +10,15 @@ Set TypingSpeed 80ms
 # Start the app
 Type "./wanitani"
 Enter
-Sleep 1s
-
-# Show the unauthenticated screen
 Sleep 2s
 
-# Type /help to show commands
-Type "/"
-Sleep 1s
-Type "h"
+# Start /learn
+Type "/learn"
 Sleep 500ms
-Type "elp"
-Sleep 500ms
-Enter
-Sleep 2s
-
-# Start /learn using tab selection
-Type "/"
-Sleep 500ms
-
-# Tab to highlight /learn
-Tab
-Sleep 300ms
-Tab
-Sleep 300ms
-Tab
-Sleep 500ms
-
 Enter
 Sleep 3s
 
-# Browse lesson - switch tabs
+# Browse tabs
 Tab
 Sleep 1.5s
 Tab
@@ -48,21 +26,21 @@ Sleep 1.5s
 Tab
 Sleep 1.5s
 
-# Go to next item
+# Next item
 Enter
 Sleep 1.5s
 
-# Browse tabs on second item
+# Browse tabs
 Tab
 Sleep 1.5s
 Tab
 Sleep 1.5s
 
-# Go to next item
+# Next item
 Enter
 Sleep 1.5s
 
-# Go to quiz (last item, press enter)
+# Start quiz (last item)
 Enter
 Sleep 2s
 
@@ -74,7 +52,7 @@ Sleep 1.5s
 Enter
 Sleep 1s
 
-# Answer reading question with romaji -> hiragana
+# Answer reading with romaji -> hiragana
 Type "tai"
 Sleep 1s
 Enter

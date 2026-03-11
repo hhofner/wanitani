@@ -169,16 +169,6 @@ var commands = []command{
 
 // ── Mascot ──────────────────────────────────────────────────
 
-var crocArt = "" +
-	"      ██████████\n" +
-	"    ██░░██░░████████\n" +
-	"    ██████████████████▄\n" +
-	"  ████████████████████▀\n" +
-	"  ██████████████████████\n" +
-	"  ██░██████████████░████\n" +
-	"    ██████████████████\n" +
-	"    ██  ████████  ██\n" +
-	"    ▀▀  ▀▀    ▀▀  ▀▀"
 
 // ── WaniKani API ────────────────────────────────────────────
 
@@ -274,9 +264,6 @@ var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#FF86C8"))
-
-	crocStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#66BB6A"))
 
 	notAuthStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FFD54F")).
@@ -397,7 +384,7 @@ type model struct {
 	ready          bool
 	authenticated  bool
 	token          string
-	showMascot     bool
+
 	statusMsg      string
 	mode           inputMode
 	summary        *wkSummary
@@ -434,7 +421,7 @@ func initialModel() model {
 		textInput:     ti,
 		authenticated: authenticated,
 		token:         token,
-		showMascot:    true,
+
 		statusMsg:     "",
 		mode:          modeDefault,
 		selectedCmd:   -1,
@@ -541,7 +528,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					selected := matches[m.selectedCmd].name
 					m.textInput.SetValue("")
 					m.selectedCmd = -1
-					m.showMascot = false
+	
 					return handleCommand(m, selected)
 				}
 			}
@@ -556,7 +543,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode != modeDefault {
 				return handleModeInput(m, input)
 			} else if strings.HasPrefix(input, "/") {
-				m.showMascot = false
+
 				return handleCommand(m, input)
 			}
 		}
@@ -818,25 +805,10 @@ func (m model) viewDashboard() string {
 			Render("Type /help for commands.")
 	}
 
-	var centeredBlock string
-	if m.showMascot {
-		croc := crocStyle.Render(crocArt)
-		crocAndContent := lipgloss.JoinHorizontal(
-			lipgloss.Center,
-			"   "+croc,
-			"    ",
-			content,
-		)
-		centeredBlock = lipgloss.NewStyle().
-			Width(m.width).
-			Align(lipgloss.Center).
-			Render(crocAndContent)
-	} else {
-		centeredBlock = lipgloss.NewStyle().
-			Width(m.width).
-			Align(lipgloss.Center).
-			Render(content)
-	}
+	centeredBlock := lipgloss.NewStyle().
+		Width(m.width).
+		Align(lipgloss.Center).
+		Render(content)
 
 	status := statusStyle.Render("  " + m.statusMsg)
 
