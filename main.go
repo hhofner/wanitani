@@ -14,6 +14,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+var version = "dev"
+
 // ── Item types ──────────────────────────────────────────────
 
 type itemType int
