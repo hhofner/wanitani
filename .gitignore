@@ -1,0 +1,20 @@
+# Binary
+wanitani
+wanitani.exe
+
+# Go
+*.test
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# GoReleaser
+dist/
