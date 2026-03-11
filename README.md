@@ -2,7 +2,7 @@
 
 A terminal-based [WaniKani](https://www.wanikani.com) client.
 
-![demo](demo.gif)
+![demo](demo.gif?v=2)
 
 ## Install
 
