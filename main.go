@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,14 @@ import (
 )
 
 var version = "dev"
+
+type autoRefreshMsg struct{}
+
+func autoRefreshCmd() tea.Cmd {
+	return tea.Tick(10*time.Minute, func(t time.Time) tea.Msg {
+		return autoRefreshMsg{}
+	})
+}
 
 // ── Item types ──────────────────────────────────────────────
 
@@ -129,6 +138,11 @@ type quizQuestion struct {
 	answers    []string // accepted answers
 }
 
+type reviewScore struct {
+	incorrectMeaning int
+	incorrectReading int
+}
+
 func (q quizQuestion) promptLabel() string {
 	return fmt.Sprintf("%s %s", q.kind, q.question)
 }
@@ -141,6 +155,7 @@ const (
 	screenDashboard screen = iota
 	screenLesson
 	screenQuiz
+	screenReview
 )
 
 // ── Input modes ─────────────────────────────────────────────
@@ -164,6 +179,7 @@ var commands = []command{
 	{name: "/add-token", desc: "Set your WaniKani API token"},
 	{name: "/learn", desc: "Start a lesson session"},
 	{name: "/review", desc: "Start a review session"},
+	{name: "/refresh", desc: "Refresh lesson/review counts"},
 	{name: "/quit", desc: "Exit WaniTani"},
 }
 
@@ -400,11 +416,15 @@ type model struct {
 	lessonTabIdx   int // which content tab for current item
 	loadingLessons bool
 
-	// Quiz state
+	// Quiz state (shared by lesson quiz and review)
 	quizQuestions  []quizQuestion
 	quizIdx        int
 	quizResult     string // "correct", "incorrect", or ""
 	romajiBuffer   string // full raw romaji input for reading questions
+
+	// Review state
+	loadingReviews    bool
+	reviewIncorrect   map[int]*reviewScore // subjectID -> incorrect counts
 }
 
 func initialModel() model {
@@ -432,7 +452,7 @@ func initialModel() model {
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{textinput.Blink}
 	if m.authenticated {
-		cmds = append(cmds, fetchSummaryCmd(m.token))
+		cmds = append(cmds, fetchSummaryCmd(m.token), autoRefreshCmd())
 	}
 	return tea.Batch(cmds...)
 }
@@ -443,6 +463,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case autoRefreshMsg:
+		if m.authenticated {
+			return m, tea.Batch(fetchSummaryCmd(m.token), autoRefreshCmd())
+		}
+
 	case summaryFetchedMsg:
 		m.loadingSummary = false
 		if msg.err != nil {
@@ -472,6 +497,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = ""
 		}
 
+	case reviewsFetchedMsg:
+		m.loadingReviews = false
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("Failed to load reviews: %s", msg.err)
+		} else if len(msg.questions) == 0 {
+			m.statusMsg = "No reviews available right now."
+		} else {
+			m.quizQuestions = msg.questions
+			m.quizIdx = 0
+			m.quizResult = ""
+			m.romajiBuffer = ""
+			m.reviewIncorrect = make(map[int]*reviewScore)
+			m.textInput.SetValue("")
+			m.textInput.Placeholder = "Type your answer..."
+			m.screen = screenReview
+			m.statusMsg = ""
+		}
+
+	case reviewsSubmittedMsg:
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("Review complete! (Warning: failed to submit: %s)", msg.err)
+		} else {
+			m.statusMsg = fmt.Sprintf("Review complete! Submitted %d reviews.", msg.count)
+		}
+		return m, fetchSummaryCmd(m.token)
+
 	case tea.KeyMsg:
 		// Screen-specific key handling
 		switch m.screen {
@@ -479,6 +530,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateLesson(msg)
 		case screenQuiz:
 			return m.updateQuiz(msg)
+		case screenReview:
+			return m.updateReview(msg)
 		}
 
 		// Dashboard key handling
@@ -772,13 +825,38 @@ func (m model) View() string {
 		return m.viewLesson()
 	case screenQuiz:
 		return m.viewQuiz()
+	case screenReview:
+		return m.viewReview()
 	default:
 		return m.viewDashboard()
 	}
 }
 
 func (m model) viewDashboard() string {
-	title := titleStyle.Render("  WaniTani")
+	logo := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FF86C8")).
+		Render("██╗    ██╗ █████╗ ███╗  ██╗██╗████████╗ █████╗ ███╗  ██╗██╗") + "\n" +
+		lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF69B4")).
+			Render("██║    ██║██╔══██╗████╗ ██║██║╚══██╔══╝██╔══██╗████╗ ██║██║") + "\n" +
+		lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF4DA6")).
+			Render("██║ █╗ ██║███████║██╔██╗██║██║   ██║   ███████║██╔██╗██║██║") + "\n" +
+		lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF3399")).
+			Render("██║███╗██║██╔══██║██║╚████║██║   ██║   ██╔══██║██║╚████║██║") + "\n" +
+		lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF1A8C")).
+			Render("╚███╔███╔╝██║  ██║██║ ╚███║██║   ██║   ██║  ██║██║ ╚███║██║") + "\n" +
+		lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF007F")).
+			Render(" ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚══╝╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚══╝╚═╝")
 
 	var content string
 	if !m.authenticated {
@@ -789,6 +867,12 @@ func (m model) viewDashboard() string {
 			Width(m.width).
 			Foreground(lipgloss.Color("#888888")).
 			Render("Fetching lessons...")
+	} else if m.loadingReviews {
+		content = lipgloss.NewStyle().
+			Align(lipgloss.Center).
+			Width(m.width).
+			Foreground(lipgloss.Color("#888888")).
+			Render("Fetching reviews...")
 	} else if m.summary != nil {
 		content = renderDashboard(*m.summary)
 	} else if m.loadingSummary {
@@ -805,10 +889,15 @@ func (m model) viewDashboard() string {
 			Render("Type /help for commands.")
 	}
 
+	centeredLogo := lipgloss.NewStyle().
+		Width(m.width).
+		Align(lipgloss.Center).
+		Render(logo)
+
 	centeredBlock := lipgloss.NewStyle().
 		Width(m.width).
 		Align(lipgloss.Center).
-		Render(content)
+		Render(centeredLogo + "\n\n" + content)
 
 	status := statusStyle.Render("  " + m.statusMsg)
 
@@ -850,8 +939,6 @@ func (m model) viewDashboard() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(title)
-	b.WriteString("\n")
 	b.WriteString(strings.Repeat("\n", topPad))
 	b.WriteString(centeredBlock)
 	b.WriteString("\n")
@@ -1073,6 +1160,205 @@ func (m model) viewQuiz() string {
 	return centerBlock.String()
 }
 
+// ── Review ──────────────────────────────────────────────────
+
+func (m model) updateReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	isReading := m.isReadingQuestion()
+
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return m, tea.Quit
+	case tea.KeyEsc:
+		m.screen = screenDashboard
+		m.statusMsg = "Left review."
+		m.romajiBuffer = ""
+		return m, fetchSummaryCmd(m.token)
+	case tea.KeyEnter:
+		if m.quizResult != "" {
+			wasIncorrect := m.quizResult == "incorrect"
+			currentQ := m.quizQuestions[m.quizIdx]
+
+			// Track incorrect answers for SRS submission
+			if wasIncorrect {
+				score, ok := m.reviewIncorrect[currentQ.subjectID]
+				if !ok {
+					score = &reviewScore{}
+					m.reviewIncorrect[currentQ.subjectID] = score
+				}
+				if currentQ.question == questionMeaning {
+					score.incorrectMeaning++
+				} else {
+					score.incorrectReading++
+				}
+				// Re-queue
+				m.quizQuestions = append(m.quizQuestions, currentQ)
+			}
+
+			m.quizResult = ""
+			m.quizIdx++
+			m.textInput.SetValue("")
+			m.romajiBuffer = ""
+
+			if m.quizIdx >= len(m.quizQuestions) {
+				m.screen = screenDashboard
+				m.statusMsg = "Review complete! Submitting to WaniKani..."
+				return m, submitReviewsCmd(m.token, m.reviewIncorrect, m.quizQuestions)
+			}
+			return m, nil
+		}
+
+		// For reading: finalize pending "n" as ん before checking
+		if isReading && m.romajiBuffer != "" {
+			finalized := m.romajiBuffer
+			if strings.HasSuffix(finalized, "n") {
+				finalized = finalized[:len(finalized)-1] + "nn"
+			}
+			converted, _ := romajiToHiragana(finalized)
+			m.textInput.SetValue(converted)
+		}
+
+		input := strings.TrimSpace(m.textInput.Value())
+		if input == "" {
+			return m, nil
+		}
+
+		q := m.quizQuestions[m.quizIdx]
+		correct := false
+		inputLower := strings.ToLower(input)
+		for _, a := range q.answers {
+			if strings.ToLower(a) == inputLower {
+				correct = true
+				break
+			}
+		}
+
+		if correct {
+			m.quizResult = "correct"
+		} else {
+			m.quizResult = "incorrect"
+		}
+		m.romajiBuffer = ""
+		return m, nil
+
+	case tea.KeyBackspace:
+		if isReading {
+			if len(m.romajiBuffer) > 0 {
+				m.romajiBuffer = m.romajiBuffer[:len(m.romajiBuffer)-1]
+				m.syncRomajiDisplay()
+			}
+			return m, nil
+		}
+
+	case tea.KeyRunes:
+		if isReading {
+			typed := strings.ToLower(string(msg.Runes))
+			m.romajiBuffer += typed
+			m.syncRomajiDisplay()
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
+}
+
+func (m model) viewReview() string {
+	if m.quizIdx >= len(m.quizQuestions) {
+		return "Review complete!"
+	}
+
+	q := m.quizQuestions[m.quizIdx]
+	color := itemColor(q.kind)
+
+	// ── Top: kind label + characters ──
+	kindLabel := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(color).
+		Bold(true).
+		Padding(0, 2).
+		Render(" " + q.kind.String() + " ")
+
+	kindBlock := lipgloss.NewStyle().
+		Width(m.width).
+		Align(lipgloss.Center).
+		Render(kindLabel)
+
+	characters := charDisplayStyle.
+		Foreground(color).
+		Render(q.characters)
+
+	charBlock := lipgloss.NewStyle().
+		Width(m.width).
+		Align(lipgloss.Center).
+		Render(characters)
+
+	banner := lipgloss.JoinVertical(lipgloss.Center,
+		kindBlock, "", "", charBlock, "")
+
+	// ── Progress ──
+	progress := lipgloss.NewStyle().
+		Width(m.width).
+		Align(lipgloss.Center).
+		Foreground(lipgloss.Color("#888888")).
+		Render(fmt.Sprintf("%d / %d", m.quizIdx+1, len(m.quizQuestions)))
+
+	// ── Prompt ──
+	prompt := quizPromptStyle.
+		Width(m.width).
+		Render(q.promptLabel())
+
+	// ── Result line ──
+	resultLine := ""
+	if m.quizResult != "" {
+		var resultText string
+		if m.quizResult == "correct" {
+			resultText = correctStyle.Render("Correct!")
+		} else {
+			resultText = incorrectStyle.Render("Incorrect — ") +
+				lipgloss.NewStyle().Foreground(lipgloss.Color("#CCCCCC")).Render(strings.Join(q.answers, ", "))
+		}
+		resultLine = lipgloss.NewStyle().
+			Width(m.width).
+			Align(lipgloss.Center).
+			Render(resultText)
+	}
+
+	// ── Input box ──
+	inputBox := inputBoxFocusStyle.
+		Width(m.width - 4).
+		BorderForeground(color).
+		Render(m.textInput.View())
+
+	continueHint := ""
+	if m.quizResult != "" {
+		continueHint = lipgloss.NewStyle().
+			Width(m.width).
+			Align(lipgloss.Center).
+			Render(hintStyle.Render("Press Enter to continue"))
+	}
+
+	// ── Layout ──
+	var b strings.Builder
+	b.WriteString(banner)
+	b.WriteString("\n")
+	b.WriteString(progress)
+	b.WriteString("\n\n")
+	b.WriteString(prompt)
+	b.WriteString("\n\n")
+	if resultLine != "" {
+		b.WriteString(resultLine)
+		b.WriteString("\n")
+	}
+	b.WriteString(inputBox)
+	if continueHint != "" {
+		b.WriteString("\n")
+		b.WriteString(continueHint)
+	}
+
+	return b.String()
+}
+
 // ── Render helpers ──────────────────────────────────────────
 
 func renderNotAuthenticated() string {
@@ -1161,7 +1447,16 @@ func handleCommand(m model, input string) (model, tea.Cmd) {
 		if !m.authenticated {
 			m.statusMsg = "Not authenticated. Use /add-token first."
 		} else {
-			m.statusMsg = "Review mode coming soon!"
+			m.loadingReviews = true
+			m.statusMsg = "Fetching reviews..."
+			return m, fetchReviewsCmd(m.token, 10)
+		}
+	case "/refresh":
+		if !m.authenticated {
+			m.statusMsg = "Not authenticated. Use /add-token first."
+		} else {
+			m.statusMsg = "Refreshing..."
+			return m, fetchSummaryCmd(m.token)
 		}
 	case "/quit":
 		return m, tea.Quit

@@ -391,3 +391,162 @@ func startAssignmentsCmd(token string, subjectIDs []int) tea.Cmd {
 		return assignmentsStartedMsg{count: started}
 	}
 }
+
+// ── Reviews ─────────────────────────────────────────────────
+
+// fetchReviewSubjectIDs gets the subject IDs available for reviews (first batch only).
+func fetchReviewSubjectIDs(token string) ([]int, error) {
+	body, err := wkGet(token, "/summary")
+	if err != nil {
+		return nil, err
+	}
+
+	var result wkSummaryResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	// Only the first reviews entry has items available now
+	var ids []int
+	if len(result.Data.Reviews) > 0 {
+		ids = append(ids, result.Data.Reviews[0].SubjectIDs...)
+	}
+	return ids, nil
+}
+
+type reviewsFetchedMsg struct {
+	questions []quizQuestion
+	err       error
+}
+
+func fetchReviewsCmd(token string, maxItems int) tea.Cmd {
+	return func() tea.Msg {
+		ids, err := fetchReviewSubjectIDs(token)
+		if err != nil {
+			return reviewsFetchedMsg{err: err}
+		}
+
+		if len(ids) == 0 {
+			return reviewsFetchedMsg{}
+		}
+
+		if maxItems > 0 && len(ids) > maxItems {
+			ids = ids[:maxItems]
+		}
+
+		subjects, err := fetchSubjects(token, ids)
+		if err != nil {
+			return reviewsFetchedMsg{err: err}
+		}
+
+		var questions []quizQuestion
+		for _, s := range subjects {
+			chars := "〇"
+			if s.Data.Characters != nil {
+				chars = *s.Data.Characters
+			}
+
+			kind := itemKanji
+			switch s.Object {
+			case "radical":
+				kind = itemRadical
+			case "vocabulary", "kana_vocabulary":
+				kind = itemVocabulary
+			}
+
+			var meanings []string
+			for _, m := range s.Data.Meanings {
+				meanings = append(meanings, m.Meaning)
+			}
+
+			// Meaning question for all types
+			questions = append(questions, quizQuestion{
+				subjectID:  s.ID,
+				characters: chars,
+				kind:       kind,
+				question:   questionMeaning,
+				answers:    meanings,
+			})
+
+			// Reading question for kanji and vocabulary
+			if kind != itemRadical {
+				var readings []string
+				for _, r := range s.Data.Readings {
+					readings = append(readings, r.Reading)
+				}
+				if len(readings) > 0 {
+					questions = append(questions, quizQuestion{
+						subjectID:  s.ID,
+						characters: chars,
+						kind:       kind,
+						question:   questionReading,
+						answers:    readings,
+					})
+				}
+			}
+		}
+
+		return reviewsFetchedMsg{questions: questions}
+	}
+}
+
+// submitReview submits a single review to WaniKani.
+func submitReview(token string, subjectID int, incorrectMeaning int, incorrectReading int) error {
+	payload := fmt.Sprintf(
+		`{"review":{"subject_id":%d,"incorrect_meaning_answers":%d,"incorrect_reading_answers":%d}}`,
+		subjectID, incorrectMeaning, incorrectReading,
+	)
+
+	req, err := http.NewRequest("POST", wkBaseURL+"/reviews", bytes.NewReader([]byte(payload)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Wanikani-Revision", "20170710")
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("submit review for subject %d: HTTP %d: %s", subjectID, resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+type reviewsSubmittedMsg struct {
+	count int
+	err   error
+}
+
+func submitReviewsCmd(token string, scores map[int]*reviewScore, questions []quizQuestion) tea.Cmd {
+	return func() tea.Msg {
+		// Collect all unique subject IDs from the questions
+		subjectSet := make(map[int]bool)
+		for _, q := range questions {
+			subjectSet[q.subjectID] = true
+		}
+
+		submitted := 0
+		for subjectID := range subjectSet {
+			incMeaning := 0
+			incReading := 0
+			if score, ok := scores[subjectID]; ok {
+				incMeaning = score.incorrectMeaning
+				incReading = score.incorrectReading
+			}
+
+			if err := submitReview(token, subjectID, incMeaning, incReading); err != nil {
+				// Continue submitting others
+				continue
+			}
+			submitted++
+		}
+
+		return reviewsSubmittedMsg{count: submitted}
+	}
+}
