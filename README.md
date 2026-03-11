@@ -24,6 +24,8 @@ wanitani
 
 Set your API token with `/add-token`, then use `/learn` or `/review`.
 
+Your token is saved locally at `~/.wanitani/token`.
+
 ## License
 
 MIT
